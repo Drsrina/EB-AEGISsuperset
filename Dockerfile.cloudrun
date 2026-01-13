@@ -1,0 +1,41 @@
+# Dockerfile otimizado para Google Cloud Run
+# Usa a imagem oficial do Apache Superset como base (já tem assets compilados)
+FROM apache/superset:latest
+
+# Mudar para root para instalar dependências
+USER root
+
+# Copiar e instalar dependências do Google Cloud
+COPY requirements/google_cloud.txt /app/requirements/google_cloud.txt
+RUN pip install --no-cache-dir -r /app/requirements/google_cloud.txt
+
+# Copiar arquivo de configuração customizado
+COPY docker/pythonpath_dev/superset_config.py /app/pythonpath/superset_config.py
+
+# Garantir que o pythonpath está no PYTHONPATH
+ENV PYTHONPATH="/app/pythonpath:${PYTHONPATH}"
+
+# Voltar para usuário superset por segurança
+USER superset
+
+# Expor porta 8088
+EXPOSE 8088
+
+# Script de inicialização com db upgrade, criação de admin e gunicorn
+CMD ["sh", "-c", "\
+    superset db upgrade && \
+    superset fab create-admin \
+        --username admin \
+        --firstname Superset \
+        --lastname Admin \
+        --email admin@superset.com \
+        --password admin || true && \
+    superset init && \
+    gunicorn \
+        --bind 0.0.0.0:8088 \
+        --worker-class gevent \
+        --workers 2 \
+        --timeout 120 \
+        --access-logfile - \
+        --error-logfile - \
+        'superset.app:create_app()'"]
