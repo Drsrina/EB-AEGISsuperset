@@ -139,3 +139,6 @@ PROJECT.md
 .env.local
 oxc-custom-build/
 *.code-workspace
+
+# Cloud Run secrets (não commitar credenciais)
+setup_secrets.sh

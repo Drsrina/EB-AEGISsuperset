@@ -1,0 +1,36 @@
+steps:
+  # 1. Build da imagem usando o Dockerfile otimizado
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/superset-prod', '-f', 'Dockerfile.cloudrun', '.']
+
+  # 2. Push da imagem para o Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/superset-prod']
+
+  # 3. Deploy no Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'superset-prod'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/superset-prod'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--port'
+      - '8088'
+      - '--memory'
+      - '2Gi'
+
+images:
+  - 'gcr.io/$PROJECT_ID/superset-prod'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'
+
+timeout: '1200s'

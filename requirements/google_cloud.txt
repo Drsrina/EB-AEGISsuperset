@@ -2,5 +2,4 @@ psycopg2-binary
 sqlalchemy-bigquery
 google-cloud-bigquery
 pandas-gbq
-gevent
 gunicorn
