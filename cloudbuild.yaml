@@ -25,6 +25,13 @@ steps:
       - '8088'
       - '--memory'
       - '2Gi'
+      - '--cpu'
+      - '2'
+      - '--timeout'
+      - '600'
+      - '--cpu-boost'
+      - '--max-instances'
+      - '10'
 
 images:
   - 'us-central1-docker.pkg.dev/$PROJECT_ID/superset-repo/superset-prod'
