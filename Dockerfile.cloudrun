@@ -1,42 +1,15 @@
-# Dockerfile otimizado para Google Cloud Run - Deploy Automático via CI/CD
-# Usa a imagem oficial do Apache Superset como base (assets já compilados)
 FROM apache/superset:latest
 
-# Mudar para root para instalar dependências
 USER root
 
 # Copiar e instalar dependências do Google Cloud
 COPY requirements/google_cloud.txt /app/requirements/google_cloud.txt
 RUN pip install --no-cache-dir -r /app/requirements/google_cloud.txt
 
-# Copiar arquivo de configuração customizado
-COPY superset_config_cloudrun.py /app/pythonpath/superset_config.py
+# Copiar configuração do Superset
+COPY superset_config.py /app/pythonpath/superset_config.py
 
-# Garantir que o pythonpath está no PYTHONPATH
-ENV PYTHONPATH="/app/pythonpath:${PYTHONPATH}"
-
-# Voltar para usuário superset por segurança
 USER superset
 
-# Expor porta 8088
-EXPOSE 8088
-
-# Script de inicialização otimizado com gunicorn/gthread
-CMD ["/bin/sh", "-c", "\
-    superset db upgrade && \
-    superset fab create-admin \
-    --username admin \
-    --password admin \
-    --firstname Admin \
-    --lastname Teste \
-    --email admin@teste.com || true && \
-    superset init && \
-    gunicorn \
-    -w 1 \
-    -k gthread \
-    --threads 4 \
-    --timeout 120 \
-    -b 0.0.0.0:8088 \
-    --access-logfile - \
-    --error-logfile - \
-    'superset.app:create_app()'"]
+# Comando de inicialização com gthread
+CMD ["/bin/sh", "-c", "superset db upgrade && superset fab create-admin --username admin --password admin --firstname Admin --lastname Teste --email admin@teste.com || true && superset init && gunicorn -w 1 -k gthread --threads 4 --timeout 120 -b 0.0.0.0:8088 'superset.app:create_app()'"]
