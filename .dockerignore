@@ -47,7 +47,7 @@ superset-websocket/dist/
 venv
 .venv
 
-# Permitir arquivos necessários para Cloud Run deploy
+# Liberar arquivos de config do Cloud Run (Aegis Fix)
 !superset_config.py
 !Dockerfile.cloudrun
 !requirements/google_cloud.txt

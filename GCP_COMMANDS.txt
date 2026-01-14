@@ -1,0 +1,321 @@
+# ============================================================================
+# COMANDOS ÚTEIS - Deploy Superset no GCP Cloud Run
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# 1. CONFIGURAÇÃO INICIAL DO GOOGLE CLOUD
+# ----------------------------------------------------------------------------
+
+# Login no Google Cloud
+gcloud auth login
+
+# Selecionar o projeto
+gcloud config set project SEU_PROJECT_ID
+
+# Habilitar APIs necessárias
+gcloud services enable \
+  cloudbuild.googleapis.com \
+  run.googleapis.com \
+  artifactregistry.googleapis.com \
+  sqladmin.googleapis.com
+
+# ----------------------------------------------------------------------------
+# 2. CRIAR ARTIFACT REGISTRY REPOSITORY
+# ----------------------------------------------------------------------------
+
+gcloud artifacts repositories create superset-repo \
+  --repository-format=docker \
+  --location=us-central1 \
+  --description="Superset Docker images for Cloud Run"
+
+# Verificar repositório criado
+gcloud artifacts repositories list --location=us-central1
+
+# ----------------------------------------------------------------------------
+# 3. CONFIGURAR CLOUD BUILD TRIGGER (via CLI)
+# ----------------------------------------------------------------------------
+
+# Criar trigger para branch main
+gcloud builds triggers create github \
+  --name="superset-deploy-main" \
+  --repo-name="EB-AEGISsuperset" \
+  --repo-owner="SEU_GITHUB_USERNAME" \
+  --branch-pattern="^main$" \
+  --build-config="cloudbuild.yaml"
+
+# Listar triggers
+gcloud builds triggers list
+
+# ----------------------------------------------------------------------------
+# 4. BUILD MANUAL (Opcional - para testar)
+# ----------------------------------------------------------------------------
+
+# Build local da imagem
+gcloud builds submit \
+  --config cloudbuild.yaml \
+  --substitutions=_PROJECT_ID=SEU_PROJECT_ID
+
+# ----------------------------------------------------------------------------
+# 5. CRIAR CLOUD SQL INSTANCE (Recomendado)
+# ----------------------------------------------------------------------------
+
+# PostgreSQL
+gcloud sql instances create superset-db \
+  --database-version=POSTGRES_15 \
+  --tier=db-g1-small \
+  --region=us-central1 \
+  --root-password=SUA_SENHA_SEGURA
+
+# MySQL
+gcloud sql instances create superset-db \
+  --database-version=MYSQL_8_0 \
+  --tier=db-g1-small \
+  --region=us-central1 \
+  --root-password=SUA_SENHA_SEGURA
+
+# Criar banco de dados
+gcloud sql databases create superset --instance=superset-db
+
+# Criar usuário
+gcloud sql users create superset-user \
+  --instance=superset-db \
+  --password=SUA_SENHA_SEGURA
+
+# Obter connection name (para usar no SQLALCHEMY_DATABASE_URI)
+gcloud sql instances describe superset-db --format="value(connectionName)"
+# Resultado: PROJECT_ID:us-central1:superset-db
+
+# ----------------------------------------------------------------------------
+# 6. GERAR SECRET_KEY
+# ----------------------------------------------------------------------------
+
+# Gerar SECRET_KEY seguro
+python -c "import secrets; print(secrets.token_hex(32))"
+
+# ----------------------------------------------------------------------------
+# 7. CRIAR CLOUD RUN JOB (Inicialização do Banco)
+# ----------------------------------------------------------------------------
+
+# Criar Job de inicialização
+gcloud run jobs create superset-db-init \
+  --image=us-central1-docker.pkg.dev/SEU_PROJECT_ID/superset-repo/superset-prod \
+  --region=us-central1 \
+  --set-env-vars="SQLALCHEMY_DATABASE_URI=postgresql+psycopg2://superset-user:SENHA@/superset?host=/cloudsql/PROJECT_ID:us-central1:superset-db" \
+  --set-env-vars="SECRET_KEY=SUA_SECRET_KEY_AQUI" \
+  --set-cloudsql-instances=PROJECT_ID:us-central1:superset-db \
+  --cpu=2 \
+  --memory=2Gi \
+  --max-retries=1 \
+  --task-timeout=900s \
+  --command="/bin/sh" \
+  --args="-c,superset db upgrade && superset fab create-admin --username admin --password admin --firstname Admin --lastname User --email admin@example.com && superset init"
+
+# Executar Job manualmente (primeira vez)
+gcloud run jobs execute superset-db-init --region=us-central1
+
+# Verificar logs do Job
+gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=superset-db-init" \
+  --limit=100 \
+  --format=json
+
+# ----------------------------------------------------------------------------
+# 8. CRIAR CLOUD RUN SERVICE (Servidor Web)
+# ----------------------------------------------------------------------------
+
+# Criar Service (após o Job ter executado com sucesso)
+gcloud run deploy superset-prod \
+  --image=us-central1-docker.pkg.dev/SEU_PROJECT_ID/superset-repo/superset-prod \
+  --region=us-central1 \
+  --platform=managed \
+  --set-env-vars="SQLALCHEMY_DATABASE_URI=postgresql+psycopg2://superset-user:SENHA@/superset?host=/cloudsql/PROJECT_ID:us-central1:superset-db" \
+  --set-env-vars="SECRET_KEY=SUA_SECRET_KEY_AQUI" \
+  --set-cloudsql-instances=PROJECT_ID:us-central1:superset-db \
+  --cpu=2 \
+  --memory=4Gi \
+  --timeout=120s \
+  --min-instances=1 \
+  --max-instances=10 \
+  --port=8088 \
+  --no-allow-unauthenticated \
+  --command="/bin/sh" \
+  --args="-c,gunicorn -w 2 -k gthread --threads 4 --timeout 120 -b 0.0.0.0:8088 'superset.app:create_app()'"
+
+# Obter URL do Service
+gcloud run services describe superset-prod \
+  --region=us-central1 \
+  --format="value(status.url)"
+
+# ----------------------------------------------------------------------------
+# 9. ATUALIZAR SERVICE (Após novo deploy via Cloud Build)
+# ----------------------------------------------------------------------------
+
+# Atualizar apenas a imagem (mantém env vars e config)
+gcloud run services update superset-prod \
+  --image=us-central1-docker.pkg.dev/SEU_PROJECT_ID/superset-repo/superset-prod:latest \
+  --region=us-central1
+
+# ----------------------------------------------------------------------------
+# 10. GERENCIAR VARIÁVEIS DE AMBIENTE
+# ----------------------------------------------------------------------------
+
+# Adicionar/Atualizar variável
+gcloud run services update superset-prod \
+  --region=us-central1 \
+  --update-env-vars="NEW_VAR=value"
+
+# Remover variável
+gcloud run services update superset-prod \
+  --region=us-central1 \
+  --remove-env-vars="VAR_NAME"
+
+# Listar variáveis atuais
+gcloud run services describe superset-prod \
+  --region=us-central1 \
+  --format="value(spec.template.spec.containers[0].env)"
+
+# ----------------------------------------------------------------------------
+# 11. LOGS E DEBUGGING
+# ----------------------------------------------------------------------------
+
+# Ver logs do Service em tempo real
+gcloud logging tail "resource.type=cloud_run_revision AND resource.labels.service_name=superset-prod" \
+  --format=json
+
+# Ver logs específicos de erro
+gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=superset-prod AND severity>=ERROR" \
+  --limit=50 \
+  --format=json
+
+# Ver logs do último deploy
+gcloud builds log $(gcloud builds list --limit=1 --format="value(id)")
+
+# ----------------------------------------------------------------------------
+# 12. PERMISSÕES IAM (para acesso público - NÃO RECOMENDADO)
+# ----------------------------------------------------------------------------
+
+# Permitir acesso público (use apenas se necessário)
+gcloud run services add-iam-policy-binding superset-prod \
+  --region=us-central1 \
+  --member="allUsers" \
+  --role="roles/run.invoker"
+
+# Remover acesso público
+gcloud run services remove-iam-policy-binding superset-prod \
+  --region=us-central1 \
+  --member="allUsers" \
+  --role="roles/run.invoker"
+
+# Dar acesso a usuário específico
+gcloud run services add-iam-policy-binding superset-prod \
+  --region=us-central1 \
+  --member="user:EMAIL@example.com" \
+  --role="roles/run.invoker"
+
+# ----------------------------------------------------------------------------
+# 13. SCALE E RECURSOS
+# ----------------------------------------------------------------------------
+
+# Ajustar autoscaling
+gcloud run services update superset-prod \
+  --region=us-central1 \
+  --min-instances=1 \
+  --max-instances=20
+
+# Ajustar recursos
+gcloud run services update superset-prod \
+  --region=us-central1 \
+  --cpu=4 \
+  --memory=8Gi
+
+# Ajustar timeout
+gcloud run services update superset-prod \
+  --region=us-central1 \
+  --timeout=300s
+
+# ----------------------------------------------------------------------------
+# 14. ROLLBACK
+# ----------------------------------------------------------------------------
+
+# Listar revisões
+gcloud run revisions list \
+  --service=superset-prod \
+  --region=us-central1
+
+# Fazer rollback para revisão anterior
+gcloud run services update-traffic superset-prod \
+  --region=us-central1 \
+  --to-revisions=REVISION_NAME=100
+
+# ----------------------------------------------------------------------------
+# 15. DELETAR RECURSOS
+# ----------------------------------------------------------------------------
+
+# Deletar Service
+gcloud run services delete superset-prod --region=us-central1
+
+# Deletar Job
+gcloud run jobs delete superset-db-init --region=us-central1
+
+# Deletar Cloud SQL instance
+gcloud sql instances delete superset-db
+
+# Deletar Artifact Registry repository
+gcloud artifacts repositories delete superset-repo --location=us-central1
+
+# ----------------------------------------------------------------------------
+# 16. EXEMPLO: CONNECTION STRING COMPLETO
+# ----------------------------------------------------------------------------
+
+# PostgreSQL via Cloud SQL (Unix Socket)
+SQLALCHEMY_DATABASE_URI="postgresql+psycopg2://superset-user:senha123@/superset?host=/cloudsql/meu-projeto:us-central1:superset-db"
+
+# MySQL via Cloud SQL (Unix Socket)
+SQLALCHEMY_DATABASE_URI="mysql+pymysql://superset-user:senha123@/superset?unix_socket=/cloudsql/meu-projeto:us-central1:superset-db"
+
+# PostgreSQL via IP público (necessita whitelist)
+SQLALCHEMY_DATABASE_URI="postgresql+psycopg2://superset-user:senha123@35.123.45.67:5432/superset"
+
+# MySQL via IP público (necessita whitelist)
+SQLALCHEMY_DATABASE_URI="mysql+pymysql://superset-user:senha123@35.123.45.67:3306/superset"
+
+# ----------------------------------------------------------------------------
+# 17. HEALTHCHECK
+# ----------------------------------------------------------------------------
+
+# Verificar se o service está respondendo
+curl -I https://$(gcloud run services describe superset-prod --region=us-central1 --format="value(status.url)")
+
+# ----------------------------------------------------------------------------
+# 18. MONITORAMENTO
+# ----------------------------------------------------------------------------
+
+# Ver métricas do service
+gcloud monitoring time-series list \
+  --filter='resource.type="cloud_run_revision" AND resource.labels.service_name="superset-prod"' \
+  --format=json
+
+# ============================================================================
+# NOTAS IMPORTANTES
+# ============================================================================
+
+# 1. SEMPRE substitua:
+#    - SEU_PROJECT_ID pelo seu Project ID real
+#    - SEU_GITHUB_USERNAME pelo seu usuário GitHub
+#    - SENHA/SECRET_KEY por valores seguros reais
+
+# 2. Para produção, use:
+#    - Mínimo 2 CPU / 4 GiB RAM
+#    - Cloud SQL (não SQLite)
+#    - Secrets Manager para credenciais sensíveis
+#    - --no-allow-unauthenticated + IAM policies
+
+# 3. Connection strings:
+#    - Prefira Unix Socket (/cloudsql/...) para Cloud SQL
+#    - Evite IP público quando possível
+
+# 4. Gunicorn workers:
+#    - Fórmula: workers = (2 × CPU) + 1
+#    - 2 CPU = -w 2
+#    - 4 CPU = -w 4
+
+# ============================================================================

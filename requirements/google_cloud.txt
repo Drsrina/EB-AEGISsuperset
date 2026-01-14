@@ -3,3 +3,7 @@ sqlalchemy-bigquery
 google-cloud-bigquery
 pandas-gbq
 gunicorn
+# Drivers MySQL/MariaDB
+mysqlclient
+pymysql
+cryptography

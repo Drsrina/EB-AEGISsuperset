@@ -2,14 +2,21 @@ FROM apache/superset:latest
 
 USER root
 
-# Copiar e instalar dependências do Google Cloud usando uv
+# Pré-requisito MySQL: Instalar bibliotecas de sistema para compilar o driver mysqlclient
+RUN apt-get update && apt-get install -y default-libmysqlclient-dev build-essential pkg-config && rm -rf /var/lib/apt/lists/*
+
+# Copiar requirements/google_cloud.txt para /app/requirements/google_cloud.txt
 COPY requirements/google_cloud.txt /app/requirements/google_cloud.txt
+
+# Executar instalação no venv
 RUN uv pip install --no-cache -r /app/requirements/google_cloud.txt --python /app/.venv
 
-# Copiar configuração do Superset
+# Copiar superset_config.py para /app/pythonpath/superset_config.py
 COPY superset_config.py /app/pythonpath/superset_config.py
 
 USER superset
 
-# Comando de inicialização com gthread
-CMD ["/bin/sh", "-c", "superset db upgrade && superset fab create-admin --username admin --password admin --firstname Admin --lastname Teste --email admin@teste.com || true && superset init && gunicorn -w 1 -k gthread --threads 4 --timeout 120 -b 0.0.0.0:8088 'superset.app:create_app()'"]
+EXPOSE 8088
+
+# CMD placeholder seguro (controle via Cloud Run args)
+CMD ["/usr/bin/run-server.sh"]
