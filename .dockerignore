@@ -46,3 +46,9 @@ superset/static/assets/
 superset-websocket/dist/
 venv
 .venv
+
+# Permitir arquivos necessários para Cloud Run deploy
+!superset_config.py
+!Dockerfile.cloudrun
+!requirements/google_cloud.txt
+
