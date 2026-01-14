@@ -2,9 +2,9 @@ FROM apache/superset:latest
 
 USER root
 
-# Copiar e instalar dependências do Google Cloud
+# Copiar e instalar dependências do Google Cloud no venv do Superset
 COPY requirements/google_cloud.txt /app/requirements/google_cloud.txt
-RUN pip install --no-cache-dir -r /app/requirements/google_cloud.txt
+RUN /app/.venv/bin/pip install --no-cache-dir -r /app/requirements/google_cloud.txt
 
 # Copiar configuração do Superset
 COPY superset_config.py /app/pythonpath/superset_config.py
