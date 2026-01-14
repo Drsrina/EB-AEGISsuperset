@@ -53,7 +53,7 @@ venv*
 env_py3
 envpy3
 local_config.py
-/superset_config.py
+# /superset_config.py  # Comentado para permitir commit do config do Cloud Run
 /superset_text.yml
 superset.egg-info/
 superset/bin/supersetc
