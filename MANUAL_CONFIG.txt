@@ -1,224 +1,204 @@
-================================================================================
-CONFIGURAÇÃO MANUAL DO SUPERSET NO GOOGLE CLOUD RUN
-================================================================================
+=============================================================================
+  MANUAL DE CONFIGURAÇÃO - GOOGLE CLOUD RUN (SUPERSET AEGIS)
+=============================================================================
 
-Este documento explica como configurar manualmente o Superset no Google Cloud 
-Run após o deploy automático via Cloud Build.
+Este arquivo contém instruções para configurar manualmente o Cloud Run após
+o deploy automático (via Cloud Build).
 
-ESTRATÉGIA: Job de Setup + Serviço Web
-================================================================================
+A estratégia recomendada é: "Job de Setup" + "Serviço Web"
 
-O Superset requer duas etapas distintas:
+-----------------------------------------------------------------------------
+PASSO 1: GERAR AS VARIÁVEIS DE AMBIENTE
+-----------------------------------------------------------------------------
 
-1. INICIALIZAÇÃO DO BANCO DE DADOS (uma vez, ou quando houver migrations)
-   → Executar via CLOUD RUN JOB
+Você precisará configurar duas variáveis de ambiente no Cloud Run:
 
-2. SERVIDOR WEB (aplicação principal, sempre rodando)
-   → Executar via CLOUD RUN SERVICE
+1. SECRET_KEY
+   - Gere uma chave aleatória segura de 42 caracteres
+   - Comandos sugeridos:
+     * Linux/macOS: openssl rand -base64 42
+     * Python: python -c "import secrets; print(secrets.token_urlsafe(42))"
+   - Exemplo: "Xs7K9mPq4nR2wVt8YzA3bC6dE1fG5hJ7kL9mN0oP4qR"
 
+2. SQLALCHEMY_DATABASE_URI
+   - URI de conexão com seu banco de dados (Postgres ou MySQL)
+   - ATENÇÃO: Use a senha/chave ATUALIZADA do seu banco
 
-PASSO 1: VARIÁVEIS DE AMBIENTE NECESSÁRIAS
-================================================================================
+   Formatos de Conexão (Exemplos):
 
-Você DEVE configurar as seguintes variáveis de ambiente em ambos (Job e Service):
+   a) PostgreSQL (recomendado para Supabase):
+      postgresql://user:password@host:port/database
+      Exemplo real:
+      postgresql://postgres.xxxxxxxxxxxx:senha123@aws-0-us-east-1.pooler.supabase.com:5432/postgres
 
-┌──────────────────────────────────────────────────────────────────────────┐
-│ SQLALCHEMY_DATABASE_URI                                                  │
-│ Formato PostgreSQL:                                                      │
-│   postgresql+psycopg2://user:password@host:port/database                 │
-│                                                                          │
-│ Formato MySQL/MariaDB:                                                   │
-│   mysql+pymysql://user:password@host:port/database                       │
-│                                                                          │
-│ Exemplo Cloud SQL (via Unix Socket):                                    │
-│   postgresql+psycopg2://user:pass@/dbname?host=/cloudsql/PROJECT:REGION:INSTANCE │
-└──────────────────────────────────────────────────────────────────────────┘
+   b) MySQL/MariaDB:
+      mysql+pymysql://user:password@host:port/database
+      Exemplo real:
+      mysql+pymysql://admin:senha456@35.123.45.67:3306/superset_db
 
-┌──────────────────────────────────────────────────────────────────────────┐
-│ SECRET_KEY                                                               │
-│ Uma string aleatória e segura (mínimo 32 caracteres)                    │
-│                                                                          │
-│ Gere com Python:                                                         │
-│   python -c "import secrets; print(secrets.token_hex(32))"              │
-└──────────────────────────────────────────────────────────────────────────┘
+-----------------------------------------------------------------------------
+PASSO 2: CRIAR UM CLOUD RUN JOB (INICIALIZAÇÃO DO BANCO - PRIMEIRA VEZ)
+-----------------------------------------------------------------------------
 
+Este Job executa o comando de migração do banco de dados e criação do admin.
 
-PASSO 2: CRIAR CLOUD RUN JOB (Inicialização do Banco)
-================================================================================
+⚠️ CRÍTICO: Execute este job APENAS UMA VEZ na primeira configuração!
 
-Este Job é executado APENAS quando você precisa inicializar ou atualizar o 
-banco de dados.
+Passos:
+1. Acesse: Console GCP > Cloud Run > Jobs > CREATE JOB
+2. Configure:
+   - Nome: superset-setup-job
+   - Região: us-central1
+   - Imagem: us-central1-docker.pkg.dev/SEU_PROJECT_ID/superset-repo/superset-prod
+   - Container > Arguments (Command override):
 
-Console GCP → Cloud Run → JOBS → CREATE JOB
+     /bin/sh
+     -c
+     superset db upgrade && superset fab create-admin --username admin --firstname Admin --lastname User --email admin@aegis.local --password Admin@123 && superset init
 
-Configurações:
-  • Nome: superset-db-init
-  • Região: us-central1
-  • Imagem: us-central1-docker.pkg.dev/SEU_PROJECT_ID/superset-repo/superset-prod
-  
-  • CONTAINER → Command (substituir o CMD padrão):
-    ┌────────────────────────────────────────────────────────────────────┐
-    │ /bin/sh                                                            │
-    └────────────────────────────────────────────────────────────────────┘
-  
-  • CONTAINER → Arguments:
-    ┌────────────────────────────────────────────────────────────────────┐
-    │ -c                                                                 │
-    │ superset db upgrade && superset fab create-admin --username admin --password admin --firstname Admin --lastname User --email admin@example.com && superset init │
-    └────────────────────────────────────────────────────────────────────┘
-    
-    NOTA: Ajuste as credenciais de admin conforme sua necessidade!
-  
-  • RESOURCES:
-    - CPU: 2
-    - Memory: 2 GiB
-    - Task timeout: 900s (15 minutos)
-    - Max retries: 1
-  
-  • VARIABLES & SECRETS:
-    Adicione as variáveis SQLALCHEMY_DATABASE_URI e SECRET_KEY
+   - Variáveis de Ambiente:
+     * SECRET_KEY = (cole a chave gerada no PASSO 1)
+     * SQLALCHEMY_DATABASE_URI = (cole a URI do banco no PASSO 1)
 
-Execução:
-  • Execute o Job MANUALMENTE a primeira vez
-  • Execute novamente sempre que atualizar a versão do Superset ou houver 
-    migrations de banco
+   - Recursos:
+     * Memory: 2 GB
+     * CPU: 2
 
+3. Clique em CREATE
+4. Execute o Job manualmente (EXECUTE JOB) e aguarde a conclusão
+5. Verifique os logs para confirmar sucesso
 
-PASSO 3: CRIAR/ATUALIZAR CLOUD RUN SERVICE (Servidor Web)
-================================================================================
+-----------------------------------------------------------------------------
+PASSO 3: CRIAR/ATUALIZAR O CLOUD RUN SERVICE (SERVIDOR WEB PERMANENTE)
+-----------------------------------------------------------------------------
 
-Este Service é a aplicação principal que fica sempre rodando.
+Este Service roda o servidor web Gunicorn permanentemente.
 
-Console GCP → Cloud Run → SERVICES → CREATE SERVICE (ou edite superset-prod)
+Passos:
+1. Acesse: Console GCP > Cloud Run > Services
+2. Se já existir "superset-prod" (criado pelo cloudbuild.yaml):
+   - Clique em EDIT & DEPLOY NEW REVISION
+3. Se não existir:
+   - Clique em CREATE SERVICE
+   - Nome: superset-prod
+   - Região: us-central1
+   - Imagem: us-central1-docker.pkg.dev/SEU_PROJECT_ID/superset-repo/superset-prod
 
-Configurações:
-  • Nome: superset-prod
-  • Região: us-central1
-  • Imagem: us-central1-docker.pkg.dev/SEU_PROJECT_ID/superset-repo/superset-prod
-  
-  • CONTAINER → Command (substituir o CMD padrão):
-    ┌────────────────────────────────────────────────────────────────────┐
-    │ /bin/sh                                                            │
-    └────────────────────────────────────────────────────────────────────┘
-  
-  • CONTAINER → Arguments:
-    ┌────────────────────────────────────────────────────────────────────┐
-    │ -c                                                                 │
-    │ gunicorn -w 1 -k gthread --threads 4 --timeout 120 -b 0.0.0.0:8088 'superset.app:create_app()' │
-    └────────────────────────────────────────────────────────────────────┘
-  
-  • CONTAINER → Container port: 8088
-  
-  • RESOURCES:
-    - CPU: 2 (ou mais para produção)
-    - Memory: 2 GiB (MÍNIMO recomendado, 4 GiB para produção)
-    - Request timeout: 120s
-    - Maximum requests per container: 80
-    - Minimum instances: 1 (para produção, evita cold start)
-    - Maximum instances: 10 (ajuste conforme necessidade)
-  
-  • VARIABLES & SECRETS:
-    Adicione as variáveis SQLALCHEMY_DATABASE_URI e SECRET_KEY
-  
-  • AUTHENTICATION:
-    - Escolha conforme sua necessidade de segurança
-    - Para ambiente interno: "Require authentication"
-    - Para público (não recomendado): "Allow unauthenticated invocations"
+4. Configure:
+   - Container > Arguments (Command override):
 
+     /bin/sh
+     -c
+     gunicorn -w 1 -k gthread --threads 4 --timeout 120 -b 0.0.0.0:8088 'superset.app:create_app()'
 
-PASSO 4: CONEXÃO COM CLOUD SQL (RECOMENDADO)
-================================================================================
+   - Container Port: 8088
 
-Para produção, recomenda-se usar Cloud SQL com conexão via Unix Socket:
+   - Variáveis de Ambiente (MESMAS do Job):
+     * SECRET_KEY = (cole a chave gerada)
+     * SQLALCHEMY_DATABASE_URI = (cole a URI do banco)
 
-1. Criar instância Cloud SQL (PostgreSQL ou MySQL)
+   - Recursos (MÍNIMO RECOMENDADO):
+     * Memory: 2 GB (ou 4 GB para workloads pesados)
+     * CPU: 2
+     * Request timeout: 300 segundos
+     * Maximum requests per container: 80
 
-2. No Cloud Run Service/Job:
-   CONNECTIONS → Cloud SQL connections → ADD CONNECTION
-   Selecione: PROJECT_ID:REGION:INSTANCE_NAME
+   - Autoscaling:
+     * Minimum instances: 0 (economia) ou 1 (sempre on)
+     * Maximum instances: 10
 
-3. Use a connection string apropriada:
-   
-   PostgreSQL (via Unix Socket):
-   postgresql+psycopg2://USER:PASSWORD@/DATABASE?host=/cloudsql/PROJECT_ID:REGION:INSTANCE_NAME
-   
-   MySQL (via Unix Socket):
-   mysql+pymysql://USER:PASSWORD@/DATABASE?unix_socket=/cloudsql/PROJECT_ID:REGION:INSTANCE_NAME
+   - Ingress Control:
+     * Allow all traffic (padrão)
+     * OU: Internal and Cloud Load Balancing (se usar IAP/VPN)
 
+   - Authentication:
+     * Allow unauthenticated invocations (se público)
+     * OU: Require authentication (recomendado + Cloud IAP)
 
-PASSO 5: WORKFLOW COMPLETO
-================================================================================
+5. Clique em DEPLOY
 
-1. Faça commit e push das alterações para a branch main no GitHub
+-----------------------------------------------------------------------------
+PASSO 4: ACESSAR O SUPERSET
+-----------------------------------------------------------------------------
 
-2. O Cloud Build será acionado automaticamente (se configurado o Trigger)
+1. Após o deploy do Service, copie a URL pública do Cloud Run
+   Exemplo: https://superset-prod-xxxxxxxxxxxx-uc.a.run.app
 
-3. Aguarde o build e deploy automático
+2. Acesse a URL no navegador
 
-4. Execute o Cloud Run JOB "superset-db-init" MANUALMENTE (primeira vez)
+3. Faça login:
+   - Username: admin
+   - Password: Admin@123
+   - ⚠️ ALTERE A SENHA IMEDIATAMENTE após primeiro login!
 
-5. Acesse o Cloud Run SERVICE "superset-prod"
+-----------------------------------------------------------------------------
+PASSO 5: PRÓXIMAS AÇÕES
+-----------------------------------------------------------------------------
 
-6. Faça login com as credenciais de admin configuradas no Job
+1. Commit das Alterações:
+   - Adicione todos os arquivos novos ao Git
+   - Commit para a branch main
+   - Push para o GitHub
 
+2. Configurar Cloud Build Trigger (se ainda não existir):
+   - Console GCP > Cloud Build > Triggers > CREATE TRIGGER
+   - Nome: superset-deploy-main
+   - Evento: Push to branch "main"
+   - Repositório: Conecte seu repo GitHub
+   - Arquivo de build: cloudbuild.yaml (raiz)
+   - Região: us-central1
 
+3. Monitoramento:
+   - Cloud Run > superset-prod > Logs (para debug)
+   - Cloud Run > Metrics (para CPU/RAM/Requests)
+
+4. Segurança Adicional (RECOMENDADO):
+   - Configure Cloud IAP (Identity-Aware Proxy)
+   - Configure Secret Manager para SECRET_KEY e DATABASE_URI
+   - Configure Cloud Armor para proteção DDoS
+
+-----------------------------------------------------------------------------
+OBSERVAÇÕES IMPORTANTES
+-----------------------------------------------------------------------------
+
+✅ O arquivo superset_config.py está configurado para:
+   - Timezone: America/Sao_Paulo (Brasil)
+   - Cache: SimpleCache (RAM) - SEM Redis
+   - Feature Flags: Modo PowerBI (filtros, drill-down, cross-filters)
+   - Timeouts: 5 minutos para SQL Lab (compatível com BigQuery)
+
+✅ O Dockerfile.cloudrun instala:
+   - Drivers PostgreSQL (psycopg2-binary)
+   - Drivers BigQuery (sqlalchemy-bigquery, google-cloud-bigquery)
+   - Drivers MySQL/MariaDB (mysqlclient, pymysql)
+   - Gunicorn (gthread mode)
+
+✅ O cloudbuild.yaml faz deploy automático ao fazer push na main
+
+⚠️ ATENÇÃO:
+   - NÃO exponha a URL pública sem autenticação em produção
+   - ALTERE a senha do admin após primeiro login
+   - REVISE os limites de CPU/RAM conforme seu workload
+   - MONITORE os logs regularmente para identificar erros
+
+-----------------------------------------------------------------------------
 TROUBLESHOOTING
-================================================================================
+-----------------------------------------------------------------------------
 
-Erro: "No module named 'MySQLdb'"
-  → Certifique-se que mysqlclient está em requirements/google_cloud.txt
-  → Rebuild a imagem
+Erro: "Invalid SECRET_KEY"
+→ Verifique se a variável SECRET_KEY está configurada no Cloud Run
 
 Erro: "Cannot connect to database"
-  → Verifique SQLALCHEMY_DATABASE_URI
-  → Para Cloud SQL, verifique se a conexão está configurada corretamente
-  → Verifique as credenciais e permissões do usuário do banco
+→ Verifique a URI de conexão (SQLALCHEMY_DATABASE_URI)
+→ Confirme que o banco está acessível (IP, porta, firewall)
 
-Timeout no Cloud Run:
-  → Aumente Memory para 4 GiB
-  → Aumente CPU para 2 ou 4
-  → Aumente Request timeout para 300s
+Erro: "Timeout" ao executar queries
+→ Aumente SQLLAB_TIMEOUT no superset_config.py
+→ Aumente o Request timeout no Cloud Run (max 300s)
 
-Cache errors (KeyError):
-  → O superset_config.py já usa SimpleCache (RAM)
-  → Não requer Redis/Memcached
+Erro: "Memory exceeded"
+→ Aumente a memória do container para 4 GB ou 8 GB
 
-
-AJUSTES DE PERFORMANCE
-================================================================================
-
-Para ambientes de produção:
-
-GUNICORN WORKERS:
-  Ajuste no comando do Service:
-  -w 2 (para 2 CPU)
-  -w 4 (para 4 CPU)
-  
-  Fórmula: workers = (2 × CPU) + 1
-
-THREADS:
-  --threads 4 a 8 (para cada worker)
-
-TIMEOUT:
-  --timeout 120 a 300 (segundos)
-
-
-SEGURANÇA
-================================================================================
-
-✓ SECRET_KEY DEVE ser seguro e único
-✓ Use Cloud SQL em produção (não SQLite)
-✓ Configure autenticação no Cloud Run
-✓ Use HTTPS (Cloud Run fornece automaticamente)
-✓ Configure IAM roles apropriados
-✓ Não exponha publicamente sem autenticação
-
-
-REFERÊNCIAS
-================================================================================
-
-• Superset Documentation: https://superset.apache.org/docs/intro
-• Cloud Run Documentation: https://cloud.google.com/run/docs
-• Cloud SQL Connection: https://cloud.google.com/sql/docs/mysql/connect-run
-
-================================================================================
+=============================================================================
+FIM DO MANUAL
+=============================================================================
