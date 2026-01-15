@@ -2,13 +2,13 @@ FROM apache/superset:latest
 
 USER root
 
-# Pré-requisito MySQL: Instale bibliotecas de sistema para compilar o driver mysqlclient
+# Pré-requisito MySQL: Instalar bibliotecas de sistema para compilar o driver mysqlclient
 RUN apt-get update && apt-get install -y default-libmysqlclient-dev build-essential pkg-config && rm -rf /var/lib/apt/lists/*
 
 # Copiar requirements/google_cloud.txt para /app/requirements/google_cloud.txt
 COPY requirements/google_cloud.txt /app/requirements/google_cloud.txt
 
-# Executar instalação no venv: RUN uv pip install --no-cache -r /app/requirements/google_cloud.txt --python /app/.venv
+# Executar instalação no venv: uv pip install --no-cache -r /app/requirements/google_cloud.txt --python /app/.venv
 RUN uv pip install --no-cache -r /app/requirements/google_cloud.txt --python /app/.venv
 
 # Copiar superset_config.py para /app/pythonpath/superset_config.py
@@ -18,5 +18,4 @@ USER superset
 
 EXPOSE 8088
 
-# CMD placeholder seguro (será sobrescrito no Cloud Run)
 CMD ["/usr/bin/run-server.sh"]

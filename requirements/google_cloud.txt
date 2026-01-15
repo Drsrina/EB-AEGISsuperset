@@ -7,3 +7,5 @@ gunicorn
 mysqlclient
 pymysql
 cryptography
+# Cache e Mensageria
+redis
