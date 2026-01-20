@@ -37,14 +37,24 @@ Configure estas variáveis no Cloud Run (tanto no Job quanto no Service):
    - Para Cloud SQL, use o Proxy de Conexão Unix Socket ou IP privado
    - Para Supabase, use a connection string "Direct Connection" (porta 5432)
 
-3. REDIS_URL (OPCIONAL - PERFORMANCE)
-   Descrição: URL de conexão com Redis para cache de queries e metadados
+3. REDIS_URL (IMPORTANTE - PERFORMANCE E QUERIES ASYNC)
+   Descrição: URL de conexão com Redis para cache de queries E execução assíncrona (Celery)
    
    Formato Upstash Redis (SSL obrigatório):
    rediss://:sua-senha@endpoint.upstash.io:6379
    
-   Nota: Se não configurado, o Superset usará cache em memória (SimpleCache)
-         com capacidade para 50.000 objetos na RAM.
+   IMPORTANTE:
+   - Com Redis configurado, o Superset usará Celery para executar queries SQL Lab de forma assíncrona
+   - Cache de dashboards e filtros será persistido no Redis (em vez de memória volátil)
+   - Se não configurado, o sistema usará SimpleCache (RAM) com capacidade para 50.000 objetos
+   
+4. GUNICORN_CMD_ARGS (OPCIONAL - JÁ CONFIGURADO NO DOCKERFILE)
+   Descrição: Argumentos do servidor web Gunicorn
+   
+   Valor padrão (já configurado no CMD do Dockerfile):
+   --workers 2 --worker-class gthread --threads 8 --timeout 120 --bind 0.0.0.0:8088
+   
+   Nota: Você não precisa configurar esta variável a menos que queira customizar o servidor.
 
 =============================================================================
 PASSO 1: CRIAR O ARTIFACT REGISTRY REPOSITORY
@@ -143,6 +153,38 @@ AUTENTICAÇÃO:
 CONFIGURAÇÕES ADICIONAIS:
 - Concurrency: 80 (Gunicorn com 4 workers x 8 threads = 32 conexões simultâneas)
 - Session affinity: Desabilitado
+
+=============================================================================
+PASSO 4.5: CONFIGURAR CELERY WORKER (OPCIONAL - PARA SQL LAB ASYNC)
+=============================================================================
+
+Se você configurou REDIS_URL, é ALTAMENTE RECOMENDADO criar um Celery Worker
+para processar queries SQL Lab de forma assíncrona (não bloquear a web).
+
+Nome: superset-celery-worker
+Região: us-central1
+Imagem: us-central1-docker.pkg.dev/SEU-PROJECT-ID/superset-repo/superset-prod
+Comando (Container command):
+
+/bin/sh
+
+Argumentos (Container arguments):
+
+-c,celery -A superset.tasks.celery_app:app worker --pool=prefork -O fair -c 4
+
+VARIÁVEIS DE AMBIENTE (MESMAS DO SERVICE):
+- SECRET_KEY: (cole sua chave gerada)
+- SQLALCHEMY_DATABASE_URI: (cole sua connection string)
+- REDIS_URL: (OBRIGATÓRIO para usar Celery)
+
+RECURSOS:
+- CPU: 2
+- Memória: 4GB
+- Min Instances: 1
+- Max Instances: 3
+
+NOTA: Sem o Celery Worker, queries SQL Lab ainda funcionarão,
+mas serão executadas de forma síncrona (bloqueando o processo web).
 
 =============================================================================
 PASSO 5: CONFIGURAÇÃO DE DOMÍNIO CUSTOMIZADO (OPCIONAL)

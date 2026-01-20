@@ -9,3 +9,5 @@ pymysql
 cryptography
 # Cache e Mensageria
 redis
+celery
+flask-caching

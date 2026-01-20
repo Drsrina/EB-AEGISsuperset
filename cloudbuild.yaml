@@ -20,6 +20,10 @@ steps:
       - 'us-central1'
       - '--platform'
       - 'managed'
+      - '--max-instances'
+      - '1'
+      - '--execution-environment'
+      - 'gen2'
       - '--no-allow-unauthenticated' # Segurança: nao expor publicamente por padrao no script auto
 
 options:

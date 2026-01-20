@@ -1,5 +1,7 @@
 import os
 import time
+from celery.schedules import crontab
+from cachelib.redis import RedisCache
 
 # --- CONFIGURAÇÃO DE TIMEZONE (BRASIL) ---
 os.environ['TZ'] = 'America/Sao_Paulo'
@@ -7,6 +9,9 @@ try:
     time.tzset()
 except AttributeError:
     pass
+
+# --- BRANDING (IDENTIDADE) ---
+APP_NAME = "Aura Analytics"
 
 # Le do Cloud Run Environment Variables
 SQLALCHEMY_DATABASE_URI = os.getenv('SQLALCHEMY_DATABASE_URI')
@@ -16,27 +21,39 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 REDIS_URL = os.getenv('REDIS_URL')
 
 if REDIS_URL:
-    # Upstash geralmente exige SSL (rediss://), verificamos isso
-    is_ssl = 'rediss://' in REDIS_URL
+    print(f"[Superset Config] REDIS_URL detectada. Configurando Cache e Celery...")
     
+    # 1. Configuração padrão para Flask-Caching (Charts, Dashboards)
     CACHE_CONFIG = {
         'CACHE_TYPE': 'RedisCache',
-        'CACHE_DEFAULT_TIMEOUT': 86400, # 24 horas
-        'CACHE_KEY_PREFIX': 'superset_results_',
+        'CACHE_DEFAULT_TIMEOUT': 86400,
+        'CACHE_KEY_PREFIX': 'superset_cache_',
         'CACHE_REDIS_URL': REDIS_URL,
     }
-    # Configuracao especifica para Data Cache (Queries)
     DATA_CACHE_CONFIG = CACHE_CONFIG
-    print(f"Usando Redis Cache (SSL={is_ssl})")
+    
+    # 2. Configuração do Celery (Fila de Tarefas para SQL Lab Async)
+    class CeleryConfig:
+        broker_url = REDIS_URL
+        imports = ("superset.sql_lab",)
+        result_backend = REDIS_URL
+        worker_prefetch_multiplier = 1
+        task_acks_late = True
+        
+    CELERY_CONFIG = CeleryConfig
+    
+    print(f"[Superset Config] Redis configurado com sucesso para Cache e Celery.")
+
 else:
     # Fallback para Memoria (Otimizado para 8GB RAM)
+    print("[Superset Config] REDIS_URL NAO ENCONTRADA. Usando SimpleCache (RAM).")
     CACHE_CONFIG = {
         'CACHE_TYPE': 'SimpleCache',
         'CACHE_DEFAULT_TIMEOUT': 86400,
-        'CACHE_THRESHOLD': 50000 # Aguenta muito mais objetos na RAM agora
+        'CACHE_THRESHOLD': 50000
     }
     DATA_CACHE_CONFIG = CACHE_CONFIG
-    print("Usando SimpleCache (Memoria Volatil)")
+    CELERY_CONFIG = None
 
 # Aplica a mesma logica para filtros e metadados
 FILTER_STATE_CACHE_CONFIG = CACHE_CONFIG
@@ -53,7 +70,7 @@ SUPERSET_WEBSERVER_TIMEOUT = 300 # 5 min
 SQLLAB_ASYNC_TIME_LIMIT_SEC = 600
 SQLLAB_TIMEOUT = 600
 
-# --- FEATURE FLAGS (MODO POWERBI) ---
+# --- FEATURE FLAGS (MODO POWERBI & ENTERPRISE) ---
 FEATURE_FLAGS = {
     "DASHBOARD_NATIVE_FILTERS": True,
     "DASHBOARD_CROSS_FILTERS": True,
@@ -61,6 +78,9 @@ FEATURE_FLAGS = {
     "DRILL_BY": True,
     "HORIZONTAL_FILTER_BAR": True,
     "ENABLE_TEMPLATE_PROCESSING": True,
+    "EMBEDDED_SUPERSET": True,
+    "CSV_EXPORT": True,
+    "ALLOW_FULL_CSV_EXPORT": True,
     "THUMBNAILS": False,
     "ALERT_REPORTS": False
 }
